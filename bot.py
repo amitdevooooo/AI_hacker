@@ -3,96 +3,92 @@ import requests
 import random
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    CallbackQueryHandler,
+)
+from googleapiclient.discovery import build
 
-# ✅ यहाँ अपने बोट टोकन, API KEY और ग्रुप यूज़रनेम डालें:
+# ✅ आपके TOKEN और API_KEY
 BOT_TOKEN = "7992369115:AAHClwij4Y1fjdTlHByn1_dwsQ5yhdsgh-4"
 API_KEY = "AIzaSyAaq1cziEhGEYbhWl64zuykOROSiWFyRXQ"
-GROUP_CHAT_ID = "@ijijin900"
+GROUP_ID = "@ijijin900"
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# ✅ Google AI API से उत्तर लेने वाला फंक्शन
+def ask_gemini(question):
+    service = build("customsearch", "v1", developerKey=API_KEY)
+    res = service.cse().list(q=question, cx="017576662512468239146:omuauf_lfve").execute()
+    return res["items"][0]["snippet"] if "items" in res else "कोई उत्तर नहीं मिला।"
 
+# ✅ Start command
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🙏 स्वागत है! मैं Static GK Quiz Bot हूँ। टाइप करें /quiz या /ask <सवाल>")
+
+# ✅ Help command
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("/quiz - क्विज चालू करें\n/ask <सवाल> - कोई भी सवाल पूछें")
+
+# ✅ Auto quiz data (current affairs style)
 quiz_data = [
     {
-        'question': 'भारत का पहला राष्ट्रपति कौन था?',
-        'options': ['डॉ. राजेंद्र प्रसाद', 'डॉ. सर्वपल्ली', 'जवाहरलाल नेहरू', 'महात्मा गांधी'],
-        'answer_index': 0
+        "question": "हाल ही में भारत के राष्ट्रपति कौन हैं?",
+        "options": ["रामनाथ कोविंद", "द्रौपदी मुर्मू", "नरेंद्र मोदी", "अमित शाह"],
+        "answer": "द्रौपदी मुर्मू",
     },
     {
-        'question': 'भारत की राजधानी क्या है?',
-        'options': ['मुंबई', 'नई दिल्ली', 'कोलकाता', 'जयपुर'],
-        'answer_index': 1
-    }
+        "question": "चंद्रयान-3 किस संस्था द्वारा लॉन्च किया गया?",
+        "options": ["NASA", "ISRO", "DRDO", "SpaceX"],
+        "answer": "ISRO",
+    },
+    {
+        "question": "G20 सम्मेलन 2023 कहाँ हुआ?",
+        "options": ["दिल्ली", "मुंबई", "बेंगलुरु", "चेन्नई"],
+        "answer": "दिल्ली",
+    },
 ]
 
-current_quiz_index = 0
+# ✅ Quiz भेजने वाला function
+async def send_quiz(app):
+    data = random.choice(quiz_data)
+    options = [[InlineKeyboardButton(opt, callback_data=opt)] for opt in data["options"]]
+    reply_markup = InlineKeyboardMarkup(options)
+    await app.bot.send_message(chat_id=GROUP_ID, text=f"🧠 {data['question']}", reply_markup=reply_markup)
+    app.bot_data["correct_answer"] = data["answer"]
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🙏 स्वागत है! यह Static GK + AI बोट है। /quiz से क्विज़ और /ask से AI से सवाल पूछें।")
+# ✅ Auto quiz बार-बार भेजना
+async def auto_quiz(app):
+    while True:
+        await send_quiz(app)
+        await asyncio.sleep(60)  # हर 1 मिनट में भेजे
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("/quiz - क्विज़ शुरू करें\n/ask <सवाल> - AI से सवाल पूछें")
-
-async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global current_quiz_index
-    question = quiz_data[current_quiz_index]
-    keyboard = [[InlineKeyboardButton(opt, callback_data=str(i))] for i, opt in enumerate(question['options'])]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(question['question'], reply_markup=reply_markup)
-
+# ✅ Button click handler
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    selected = int(query.data)
-    question = quiz_data[current_quiz_index]
-    correct = question['answer_index']
+    selected = query.data
+    correct = context.bot_data.get("correct_answer", "")
     if selected == correct:
-        await query.edit_message_text("✅ सही जवाब!")
+        await query.edit_message_text(f"✅ सही जवाब: {selected}")
     else:
-        await query.edit_message_text(f"❌ गलत! सही जवाब है: {question['options'][correct]}")
+        await query.edit_message_text(f"❌ गलत! सही जवाब था: {correct}")
 
+# ✅ Ask command (AI answer)
 async def ask_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("❗ सवाल भी लिखिए: /ask What is AI?")
-        return
-
     question = " ".join(context.args)
-    reply = await get_ai_answer(question)
-    await update.message.reply_text(reply)
+    if not question:
+        await update.message.reply_text("कृपया कोई सवाल लिखें जैसे: /ask भारत का राष्ट्रपति कौन है?")
+        return
+    await update.message.reply_text("🧠 सोच रहा हूँ...")
+    answer = ask_gemini(question)
+    await update.message.reply_text(f"🔎 उत्तर:\n{answer}")
 
-async def get_ai_answer(question: str) -> str:
-    url = "https://api.openai.com/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": "gpt-3.5-turbo",
-        "messages": [{"role": "user", "content": question}],
-        "max_tokens": 150
-    }
-    try:
-        response = requests.post(url, headers=headers, json=data)
-        result = response.json()
-        return result["choices"][0]["message"]["content"].strip()
-    except:
-        return "❗ जवाब नहीं मिल पाया, कृपया बाद में प्रयास करें।"
+# ✅ Quiz command
+async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_quiz(context.application)
 
-async def auto_quiz(app):
-    global current_quiz_index
-    await asyncio.sleep(10)
-    while True:
-        question = quiz_data[current_quiz_index]
-        keyboard = [[InlineKeyboardButton(opt, callback_data=str(i))] for i, opt in enumerate(question['options'])]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        try:
-            await app.bot.send_message(chat_id=GROUP_CHAT_ID, text=question['question'], reply_markup=reply_markup)
-        except Exception as e:
-            logger.error(f"❗ Error sending quiz: {e}")
-        current_quiz_index = (current_quiz_index + 1) % len(quiz_data)
-        await asyncio.sleep(60)
-
+# ✅ Main Function (⚠️ FIXED version)
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -102,9 +98,11 @@ def main():
     app.add_handler(CommandHandler("ask", ask_ai))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    app.job_queue.run_once(lambda context: asyncio.create_task(auto_quiz(app)), when=3)
+    # ✅ FIXED JobQueue
+    job_queue = app.job_queue
+    job_queue.run_once(lambda context: asyncio.create_task(auto_quiz(app)), when=3)
 
-    print("🤖 बोट शुरू हो गया!")
+    print("🤖 Bot चालू है!")
     app.run_polling()
 
 if __name__ == "__main__":
